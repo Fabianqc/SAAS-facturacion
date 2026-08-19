@@ -1,0 +1,32 @@
+{
+  "name": "saas-facturacion",
+  "version": "1.0.0",
+  "description": "",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev:backend": "npm run start:dev --workspace=backend",
+    "build:frontend": "npm run build --workspace=frontend",
+    "build:backend": "npm run build --workspace=backend",
+    "db:generate": "npx --workspace=backend prisma generate",
+    "db:migrate": "npx --workspace=backend prisma migrate dev",
+    "db:seed": "npx --workspace=backend prisma db seed"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fabianqc/SAAS-facturacion.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Fabianqc/SAAS-facturacion/issues"
+  },
+  "homepage": "https://github.com/Fabianqc/SAAS-facturacion#readme"
+}
+

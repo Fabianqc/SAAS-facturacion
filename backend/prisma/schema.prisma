@@ -1,0 +1,337 @@
+// Prisma Schema para SaaS de Facturación Fiscal Venezuela (SENIAT) & Multi-Tenant
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  STORE_ADMIN
+  SUPERVISOR
+  CASHIER
+}
+
+enum RifType {
+  V
+  J
+  E
+  G
+  P
+}
+
+enum TaxType {
+  GENERAL_16
+  REDUCIDO_8
+  EXENTO_0
+}
+
+enum MovementType {
+  IN
+  OUT
+  ADJUSTMENT
+  TRANSFER
+}
+
+enum InvoiceStatus {
+  DRAFT
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH_USD
+  CASH_VES
+  CARD_VES
+  TRANSFER_VES
+  PAGO_MOVIL
+  MIXED
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum SessionStatus {
+  OPEN
+  CLOSED
+}
+
+model ExchangeRate {
+  id        String   @id @default(uuid())
+  rate      Decimal  @db.Decimal(12, 4) // Tasa de cambio BCV en VES por USD
+  source    String   @default("BCV")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("exchange_rates")
+}
+
+model Tenant {
+  id           String                 @id @default(uuid())
+  name         String
+  rifType      RifType                @default(J)
+  rifNumber    String // Ej: 123456789 (Sin guiones)
+  address      String?
+  phone        String?
+  plan         String                 @default("BASIC")
+  status       String                 @default("ACTIVE")
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  stores       Store[]
+  users        User[]
+  customers    Customer[]
+  categories   Category[]
+  products     Product[]
+  invoices     Invoice[]
+  transactions FinancialTransaction[]
+
+  @@unique([rifType, rifNumber])
+  @@map("tenants")
+}
+
+model Store {
+  id             String                 @id @default(uuid())
+  tenantId       String
+  tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  address        String?
+  phone          String?
+  invoicePrefix  String                 @default("FAC-01")
+  controlPrefix  String                 @default("00")
+  nextInvoiceNum Int                    @default(1)
+  nextControlNum Int                    @default(1)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  users          UserStore[]
+  stocks         ProductStock[]
+  movements      StockMovement[]
+  cashSessions   CashSession[]
+  invoices       Invoice[]
+  transactions   FinancialTransaction[]
+
+  @@map("stores")
+}
+
+model User {
+  id             String          @id @default(uuid())
+  tenantId       String?
+  tenant         Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email          String          @unique
+  password       String
+  firstName      String
+  lastName       String
+  role           Role            @default(CASHIER)
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  stores         UserStore[]
+  cashSessions   CashSession[]
+  stockMovements StockMovement[]
+  invoices       Invoice[]
+
+  @@map("users")
+}
+
+model UserStore {
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, storeId])
+  @@map("user_stores")
+}
+
+model Category {
+  id        String    @id @default(uuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  products  Product[]
+  createdAt DateTime  @default(now())
+
+  @@map("categories")
+}
+
+model Product {
+  id           String          @id @default(uuid())
+  tenantId     String
+  tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryId   String?
+  category     Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  sku          String
+  barcode      String?
+  name         String
+  description  String?
+  costPriceUSD Decimal         @db.Decimal(12, 2)
+  salePriceUSD Decimal         @db.Decimal(12, 2)
+  taxType      TaxType         @default(GENERAL_16)
+  unit         String          @default("PZA")
+  minStock     Int             @default(5)
+  isActive     Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  stocks       ProductStock[]
+  movements    StockMovement[]
+  invoiceItems InvoiceItem[]
+
+  @@unique([tenantId, sku])
+  @@map("products")
+}
+
+model ProductStock {
+  id        String  @id @default(uuid())
+  storeId   String
+  store     Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int     @default(0)
+
+  @@unique([storeId, productId])
+  @@map("product_stocks")
+}
+
+model StockMovement {
+  id          String       @id @default(uuid())
+  storeId     String
+  store       Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  type        MovementType
+  quantity    Int
+  previousQty Int
+  newQty      Int
+  reason      String?
+  createdAt   DateTime     @default(now())
+
+  @@map("stock_movements")
+}
+
+model Customer {
+  id        String    @id @default(uuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rifType   RifType   @default(V)
+  rifNumber String // Ej: 12345678 (Cédula o RIF)
+  name      String
+  email     String?
+  phone     String?
+  address   String?
+  createdAt DateTime  @default(now())
+  invoices  Invoice[]
+
+  @@map("customers")
+}
+
+model CashSession {
+  id                String                 @id @default(uuid())
+  storeId           String
+  store             Store                  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  userId            String
+  user              User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  openedAt          DateTime               @default(now())
+  closedAt          DateTime?
+  initialAmountUSD  Decimal                @db.Decimal(12, 2)
+  initialAmountVES  Decimal                @db.Decimal(12, 2)
+  expectedAmountUSD Decimal?               @db.Decimal(12, 2)
+  expectedAmountVES Decimal?               @db.Decimal(12, 2)
+  closingAmountUSD  Decimal?               @db.Decimal(12, 2)
+  closingAmountVES  Decimal?               @db.Decimal(12, 2)
+  differenceUSD     Decimal?               @db.Decimal(12, 2)
+  differenceVES     Decimal?               @db.Decimal(12, 2)
+  status            SessionStatus          @default(OPEN)
+  notes             String?
+  invoices          Invoice[]
+  transactions      FinancialTransaction[]
+
+  @@map("cash_sessions")
+}
+
+model Invoice {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  storeId       String
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  cashSessionId String?
+  cashSession   CashSession? @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+  customerId    String?
+  customer      Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  // Datos Fiscales SENIAT
+  invoiceNumber String // N° Factura (ej: FAC-00000001)
+  controlNumber String // N° Control Fiscal SENIAT (ej: 00-00000001)
+  status        InvoiceStatus @default(COMPLETED)
+  paymentMethod PaymentMethod @default(CASH_USD)
+
+  // Datos Bi-Moneda y Tasa BCV
+  exchangeRate  Decimal  @db.Decimal(12, 4) // Tasa BCV en el momento de la venta
+  subtotalUSD   Decimal  @db.Decimal(12, 2)
+  subtotalVES   Decimal  @db.Decimal(12, 2)
+  taxTotalUSD   Decimal  @db.Decimal(12, 2) // IVA
+  taxTotalVES   Decimal  @db.Decimal(12, 2)
+  igtfRate      Decimal  @default(3.0) @db.Decimal(5, 2) // 3% IGTF si paga en divisas
+  igtfAmountUSD Decimal  @default(0) @db.Decimal(12, 2)
+  igtfAmountVES Decimal  @default(0) @db.Decimal(12, 2)
+  totalUSD      Decimal  @db.Decimal(12, 2)
+  totalVES      Decimal  @db.Decimal(12, 2)
+
+  notes                String?
+  createdAt            DateTime              @default(now())
+  items                InvoiceItem[]
+  financialTransaction FinancialTransaction?
+
+  @@unique([tenantId, storeId, invoiceNumber])
+  @@unique([tenantId, storeId, controlNumber])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productName String
+  quantity    Int
+  unitPriceUSD Decimal @db.Decimal(12, 2)
+  unitPriceVES Decimal @db.Decimal(12, 2)
+  taxType     TaxType  @default(GENERAL_16)
+  taxRate     Decimal  @db.Decimal(5, 2) // 16%, 8% o 0%
+  taxAmountUSD Decimal @db.Decimal(12, 2)
+  taxAmountVES Decimal @db.Decimal(12, 2)
+  totalUSD    Decimal  @db.Decimal(12, 2)
+  totalVES    Decimal  @db.Decimal(12, 2)
+
+  @@map("invoice_items")
+}
+
+model FinancialTransaction {
+  id            String          @id @default(uuid())
+  tenantId      String
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  storeId       String
+  store         Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  cashSessionId String?
+  cashSession   CashSession?    @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+  invoiceId     String?         @unique
+  invoice       Invoice?        @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  type          TransactionType
+  category      String
+  amountUSD     Decimal         @db.Decimal(12, 2)
+  amountVES     Decimal         @db.Decimal(12, 2)
+  description   String?
+  createdAt     DateTime        @default(now())
+
+  @@map("financial_transactions")
+}
