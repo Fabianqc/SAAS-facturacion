@@ -7,6 +7,9 @@ import { RedisModule } from './redis/redis.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { BcvModule } from './bcv/bcv.module';
+import { ProductsModule } from './products/products.module';
+import { PurchasesModule } from './purchases/purchases.module';
+import { HrModule } from './hr/hr.module';
 
 @Module({
   imports: [
@@ -18,6 +21,9 @@ import { BcvModule } from './bcv/bcv.module';
     RedisModule,
     AuthModule,
     BcvModule,
+    ProductsModule,
+    PurchasesModule,
+    HrModule,
   ],
   controllers: [AppController],
   providers: [AppService],
