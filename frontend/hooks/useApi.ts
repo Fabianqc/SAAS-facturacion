@@ -499,3 +499,112 @@ export function useCreatePosAccount() {
   });
 }
 
+// ==========================================
+// FINANZAS & ESTADO DE RESULTADOS (P&L)
+// ==========================================
+
+import { FinancialTransaction, PnLSummary, TransactionType } from '../types/finance';
+
+/**
+ * Hook para obtener el resumen P&L real del periodo
+ */
+export function usePnLSummary(startDate?: string, endDate?: string) {
+  const { token } = useAuth();
+
+  return useQuery({
+    queryKey: ['finance', 'pnl-summary', startDate, endDate],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+
+      const res = await fetch(`${API_BASE}/finance/pnl-summary?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Error al cargar Estado de Resultados (P&L)');
+      return res.json() as Promise<PnLSummary>;
+    },
+    enabled: Boolean(token),
+  });
+}
+
+/**
+ * Hook para listar transacciones y gastos justificados
+ */
+export function useFinancialTransactions(filters?: {
+  type?: TransactionType;
+  category?: string;
+  startDate?: string;
+  endDate?: string;
+}) {
+  const { token } = useAuth();
+
+  return useQuery({
+    queryKey: ['finance', 'transactions', filters],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters?.type) params.append('type', filters.type);
+      if (filters?.category) params.append('category', filters.category);
+      if (filters?.startDate) params.append('startDate', filters.startDate);
+      if (filters?.endDate) params.append('endDate', filters.endDate);
+
+      const res = await fetch(`${API_BASE}/finance/transactions?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Error al cargar movimientos financieros');
+      return res.json() as Promise<FinancialTransaction[]>;
+    },
+    enabled: Boolean(token),
+  });
+}
+
+/**
+ * Mutación para asentar un nuevo gasto o ingreso justificado
+ */
+export function useCreateFinancialTransaction() {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload: any) => {
+      const res = await fetch(`${API_BASE}/finance/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Error al registrar movimiento financiero');
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['finance', 'transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['finance', 'pnl-summary'] });
+    },
+  });
+}
+
+/**
+ * Mutación para cancelar / anular un movimiento financiero (Soft-Delete)
+ */
+export function useCancelFinancialTransaction() {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`${API_BASE}/finance/transactions/${id}/cancel`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Error al anular movimiento financiero');
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['finance', 'transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['finance', 'pnl-summary'] });
+    },
+  });
+}
+
+

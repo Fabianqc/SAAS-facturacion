@@ -117,7 +117,10 @@ function HrPayrollPageContent() {
   const [empPhone, setEmpPhone] = useState('');
   const [empEmail, setEmpEmail] = useState('');
   const [empPositionId, setEmpPositionId] = useState('');
+  // Form State: New Employee (Dual Currency Engine)
+  const [empSalaryCurrency, setEmpSalaryCurrency] = useState<'USD' | 'VES'>('USD');
   const [empBaseSalary, setEmpBaseSalary] = useState<number | ''>(200);
+  const [empBaseSalaryVES, setEmpBaseSalaryVES] = useState<number | ''>(200 * 775.3356);
   const [empFrequency, setEmpFrequency] = useState<'SEMANAL' | 'QUINCENAL' | 'MENSUAL'>('QUINCENAL');
   const [empPaymentMethod, setEmpPaymentMethod] = useState<'CASH_USD' | 'PAGO_MOVIL' | 'TRANSFER_VES'>('CASH_USD');
   const [empBankName, setEmpBankName] = useState('');
@@ -197,7 +200,9 @@ function HrPayrollPageContent() {
         phone: empPhone.trim() || undefined,
         email: empEmail.trim() || undefined,
         positionId: empPositionId,
-        baseSalaryUSD: Number(empBaseSalary),
+        salaryCurrency: empSalaryCurrency,
+        baseSalaryUSD: empSalaryCurrency === 'USD' ? Number(empBaseSalary) : Number(empBaseSalaryVES) / bcvUsd,
+        baseSalaryVES: empSalaryCurrency === 'VES' ? Number(empBaseSalaryVES) : Number(empBaseSalary) * bcvUsd,
         paymentFrequency: empFrequency,
         paymentMethod: empPaymentMethod,
         bankName: empBankName.trim() || undefined,
@@ -1171,39 +1176,112 @@ function HrPayrollPageContent() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block font-semibold mb-1">Cargo / Puesto *</label>
-                      <select
-                        value={empPositionId}
-                        onChange={(e) => {
-                          setEmpPositionId(e.target.value);
-                          const pos = positions.find((p) => p.id === e.target.value);
-                          if (pos) {
-                            setEmpBaseSalary(Number(pos.defaultSalaryUSD));
-                            if (pos.requiresUserAccount) setEmpCreatePosAccount(true);
-                          }
-                        }}
-                        required
-                        className="w-full bg-slate-50 dark:bg-slate-800 border rounded-xl p-2 font-bold"
-                      >
-                        {positions.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name} ({p.department})</option>
-                        ))}
-                      </select>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block font-semibold">Moneda del Sueldo Base *</label>
+                      <div className="flex items-center gap-1 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEmpSalaryCurrency('USD');
+                            if (typeof empBaseSalary === 'number') {
+                              setEmpBaseSalaryVES(parseFloat((empBaseSalary * bcvUsd).toFixed(2)));
+                            }
+                          }}
+                          className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                            empSalaryCurrency === 'USD' ? 'bg-emerald-600 text-white' : 'text-slate-500'
+                          }`}
+                        >
+                          💵 USD ($)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEmpSalaryCurrency('VES');
+                            if (typeof empBaseSalaryVES === 'number') {
+                              setEmpBaseSalary(parseFloat((empBaseSalaryVES / bcvUsd).toFixed(2)));
+                            }
+                          }}
+                          className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                            empSalaryCurrency === 'VES' ? 'bg-blue-600 text-white' : 'text-slate-500'
+                          }`}
+                        >
+                          🇻🇪 VES (Bs)
+                        </button>
+                      </div>
                     </div>
 
-                    <div>
-                      <label className="block font-semibold mb-1">Sueldo Base ($ USD) *</label>
-                      <input
-                        type="number"
-                        step="1"
-                        min="0"
-                        required
-                        value={empBaseSalary}
-                        onChange={(e) => setEmpBaseSalary(e.target.value === '' ? '' : parseFloat(e.target.value))}
-                        className="w-full bg-slate-50 dark:bg-slate-800 border rounded-xl p-2 font-mono font-bold text-emerald-600"
-                      />
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">Cargo / Puesto *</label>
+                        <select
+                          value={empPositionId}
+                          onChange={(e) => {
+                            setEmpPositionId(e.target.value);
+                            const pos = positions.find((p) => p.id === e.target.value);
+                            if (pos) {
+                              setEmpBaseSalary(Number(pos.defaultSalaryUSD));
+                              setEmpBaseSalaryVES(parseFloat((Number(pos.defaultSalaryUSD) * bcvUsd).toFixed(2)));
+                              if (pos.requiresUserAccount) setEmpCreatePosAccount(true);
+                            }
+                          }}
+                          required
+                          className="w-full bg-slate-50 dark:bg-slate-800 border rounded-xl p-2 font-bold"
+                        >
+                          {positions.map((p) => (
+                            <option key={p.id} value={p.id}>{p.name} ({p.department})</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block font-semibold mb-1">
+                          {empSalaryCurrency === 'USD' ? 'Sueldo Base ($ USD) *' : 'Sueldo Base (Bs VES) *'}
+                        </label>
+                        {empSalaryCurrency === 'USD' ? (
+                          <div className="space-y-1">
+                            <input
+                              type="number"
+                              step="1"
+                              min="0"
+                              required
+                              value={empBaseSalary}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                setEmpBaseSalary(val);
+                                if (typeof val === 'number') {
+                                  setEmpBaseSalaryVES(parseFloat((val * bcvUsd).toFixed(2)));
+                                }
+                              }}
+                              className="w-full bg-slate-50 dark:bg-slate-800 border rounded-xl p-2 font-mono font-bold text-emerald-600"
+                            />
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              ≈ {((typeof empBaseSalary === 'number' ? empBaseSalary : 0) * bcvUsd).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs VES
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              required
+                              value={empBaseSalaryVES}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                setEmpBaseSalaryVES(val);
+                                if (typeof val === 'number') {
+                                  setEmpBaseSalary(parseFloat((val / bcvUsd).toFixed(2)));
+                                }
+                              }}
+                              className="w-full bg-slate-50 dark:bg-slate-800 border rounded-xl p-2 font-mono font-bold text-blue-600"
+                            />
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              ≈ ${((typeof empBaseSalaryVES === 'number' ? empBaseSalaryVES : 0) / bcvUsd).toFixed(2)} USD
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 

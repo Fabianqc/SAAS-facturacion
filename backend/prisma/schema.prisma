@@ -184,6 +184,9 @@ model Product {
   description  String?
   costPriceUSD Decimal         @db.Decimal(12, 2)
   salePriceUSD Decimal         @db.Decimal(12, 2)
+  currencyOrigin String        @default("USD") // "USD" o "VES"
+  costPriceVES Decimal?        @db.Decimal(12, 2)
+  salePriceVES Decimal?        @db.Decimal(12, 2)
   taxType      TaxType         @default(GENERAL_16)
   unit         String          @default("PZA")
   packagingUnit String?
@@ -228,6 +231,9 @@ model StockMovement {
   quantity    Int
   previousQty Int
   newQty      Int
+  costUnitUSD Decimal?     @db.Decimal(12, 2)
+  costUnitVES Decimal?     @db.Decimal(12, 2)
+  exchangeRate Decimal?    @db.Decimal(12, 4)
   reason      String?
   createdAt   DateTime     @default(now())
 
@@ -341,18 +347,24 @@ model FinancialTransaction {
   id            String          @id @default(uuid())
   tenantId      String
   tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  storeId       String
-  store         Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  storeId       String?
+  store         Store?          @relation(fields: [storeId], references: [id], onDelete: Cascade)
   cashSessionId String?
   cashSession   CashSession?    @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
   invoiceId     String?         @unique
   invoice       Invoice?        @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
-  type          TransactionType
-  category      String
+  type          TransactionType // INCOME o EXPENSE
+  category      String          // ALQUILER, SERVICIOS, MANTENIMIENTO, FLETES, SUMINISTROS, PUBLICIDAD, IMPUESTOS, NOMINA, VENTAS_POS, OTROS
+  currencyOrigin String         @default("USD") // USD o VES
   amountUSD     Decimal         @db.Decimal(12, 2)
   amountVES     Decimal         @db.Decimal(12, 2)
-  description   String?
+  exchangeRate  Decimal         @default(1) @db.Decimal(12, 4)
+  justification String
+  voucherNumber String?
+  date          DateTime        @default(now())
+  isActive      Boolean         @default(true)
   createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @default(now()) @updatedAt
 
   @@map("financial_transactions")
 }
@@ -419,6 +431,7 @@ model PurchaseInvoiceItem {
   receivedUnit      String?
   packageQuantity   Float?
   unitsPerPackage   Float           @default(1)
+  currencyOrigin    String          @default("USD") // "USD" o "VES"
   costUnitUSD       Decimal         @db.Decimal(12, 2)
   costUnitVES       Decimal         @db.Decimal(12, 2)
   taxType           TaxType         @default(GENERAL_16)
@@ -438,7 +451,9 @@ model JobPosition {
   name               String // Ej: Administradora, Cajero, Charcutero, Pasillero, Vigilante
   department         String? // Ej: Ventas / Caja, Administración, Charcutería, Almacén
   requiresUserAccount Boolean   @default(false) // Si es true, habilita acceso al sistema / POS
+  salaryCurrency     String     @default("USD") // "USD" o "VES"
   defaultSalaryUSD   Decimal    @default(0) @db.Decimal(12, 2)
+  defaultSalaryVES   Decimal?   @db.Decimal(12, 2)
   description        String?
   isActive           Boolean    @default(true)
   createdAt          DateTime   @default(now())
@@ -468,7 +483,9 @@ model Employee {
   address          String?
   hireDate         DateTime           @default(now())
   paymentFrequency String             @default("QUINCENAL") // SEMANAL, QUINCENAL, MENSUAL
+  salaryCurrency   String             @default("USD") // "USD" o "VES"
   baseSalaryUSD    Decimal            @db.Decimal(12, 2)
+  baseSalaryVES    Decimal?           @db.Decimal(12, 2)
   paymentMethod    String             @default("CASH_USD") // CASH_USD, PAGO_MOVIL, TRANSFER_VES
   bankName         String?
   bankAccount      String?

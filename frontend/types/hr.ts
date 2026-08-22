@@ -4,7 +4,9 @@ export interface JobPosition {
   name: string;
   department?: string | null;
   requiresUserAccount: boolean;
+  salaryCurrency?: 'USD' | 'VES';
   defaultSalaryUSD: number;
+  defaultSalaryVES?: number | null;
   description?: string | null;
   createdAt: string;
   _count?: {
@@ -35,7 +37,9 @@ export interface Employee {
   address?: string | null;
   hireDate: string;
   paymentFrequency: 'SEMANAL' | 'QUINCENAL' | 'MENSUAL';
+  salaryCurrency?: 'USD' | 'VES';
   baseSalaryUSD: number;
+  baseSalaryVES?: number | null;
   paymentMethod: 'CASH_USD' | 'PAGO_MOVIL' | 'TRANSFER_VES';
   bankName?: string | null;
   bankAccount?: string | null;

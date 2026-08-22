@@ -10,6 +10,7 @@ import { BcvModule } from './bcv/bcv.module';
 import { ProductsModule } from './products/products.module';
 import { PurchasesModule } from './purchases/purchases.module';
 import { HrModule } from './hr/hr.module';
+import { FinanceModule } from './finance/finance.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { HrModule } from './hr/hr.module';
     ProductsModule,
     PurchasesModule,
     HrModule,
+    FinanceModule,
   ],
   controllers: [AppController],
   providers: [AppService],

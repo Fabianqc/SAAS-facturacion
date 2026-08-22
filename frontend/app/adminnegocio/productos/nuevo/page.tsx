@@ -122,9 +122,12 @@ function ProductEditorContent() {
   const [location, setLocation] = useState('');
   const [categoryId, setCategoryId] = useState('');
 
-  // Financials & Pricing
+  // Financials & Pricing (Dual Currency Engine)
+  const [currencyOrigin, setCurrencyOrigin] = useState<'USD' | 'VES'>('USD');
   const [costPriceUSD, setCostPriceUSD] = useState<number | ''>(0);
   const [salePriceUSD, setSalePriceUSD] = useState<number | ''>(0);
+  const [costPriceVES, setCostPriceVES] = useState<number | ''>(0);
+  const [salePriceVES, setSalePriceVES] = useState<number | ''>(0);
   const [marginPercent, setMarginPercent] = useState<number>(30);
   const [taxType, setTaxType] = useState<TaxType>('GENERAL_16');
 
@@ -186,8 +189,11 @@ function ProductEditorContent() {
             setBrand(found.brand || '');
             setLocation(found.location || '');
             setCategoryId(found.categoryId || '');
+            setCurrencyOrigin(found.currencyOrigin || 'USD');
             setCostPriceUSD(found.costPriceUSD || 0);
             setSalePriceUSD(found.salePriceUSD || 0);
+            setCostPriceVES(found.costPriceVES || (found.costPriceUSD ? parseFloat((found.costPriceUSD * bcvUsd).toFixed(2)) : 0));
+            setSalePriceVES(found.salePriceVES || (found.salePriceUSD ? parseFloat((found.salePriceUSD * bcvUsd).toFixed(2)) : 0));
             setMarginPercent(found.marginPercent || 30);
             setTaxType(found.taxType || 'GENERAL_16');
             setMinStock(found.minStock || 5);
@@ -308,6 +314,9 @@ function ProductEditorContent() {
         location: location.trim() || null,
         costPriceUSD: numCost,
         salePriceUSD: numSale,
+        currencyOrigin,
+        costPriceVES: typeof costPriceVES === 'number' ? costPriceVES : parseFloat((numCost * bcvUsd).toFixed(2)),
+        salePriceVES: typeof salePriceVES === 'number' ? salePriceVES : parseFloat((numSale * bcvUsd).toFixed(2)),
         taxType,
         minStock: typeof minStock === 'number' ? minStock : 5,
         isActive,
@@ -704,50 +713,161 @@ function ProductEditorContent() {
 
                   {/* 4. Rentabilidad & Precios */}
                   <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <DollarSign className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> 4. Rentabilidad & Precios Unitarios
-                    </h3>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <DollarSign className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> 4. Rentabilidad & Fijación de Precios
+                      </h3>
+
+                      {/* Selector de Moneda Base */}
+                      <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                        <button
+                          type="button"
+                          onClick={() => setCurrencyOrigin('USD')}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                            currencyOrigin === 'USD'
+                              ? 'bg-emerald-600 text-white shadow-sm'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                          }`}
+                        >
+                          💵 Fijo en Dólares ($ USD)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCurrencyOrigin('VES')}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                            currencyOrigin === 'VES'
+                              ? 'bg-blue-600 text-white shadow-sm'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                          }`}
+                        >
+                          🇻🇪 Fijo en Bolívares (Bs VES)
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-xs flex items-center justify-between">
+                      <span className="text-slate-500">Tasa Oficial BCV de Referencia:</span>
+                      <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                        1 USD = {bcvUsd.toFixed(4)} VES
+                      </span>
+                    </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Cost Input */}
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                          Costo Unitario ($ USD por {unit})
+                          {currencyOrigin === 'USD'
+                            ? `Costo de Compra ($ USD por ${unit})`
+                            : `Costo de Compra (Bs VES por ${unit})`}
                         </label>
-                        <input
-                          type="number"
-                          step="0.0001"
-                          min="0"
-                          placeholder="0.00"
-                          value={costPriceUSD}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? '' : parseFloat(e.target.value);
-                            setCostPriceUSD(val);
-                            if (typeof val === 'number' && val > 0) {
-                              const newSale = val * (1 + marginPercent / 100);
-                              setSalePriceUSD(parseFloat(newSale.toFixed(2)));
-                              if (hasPackaging) {
-                                setPackageCostUSD(parseFloat((val * numFactor).toFixed(2)));
-                              }
-                            }
-                          }}
-                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
-                        />
+                        {currencyOrigin === 'USD' ? (
+                          <div className="space-y-1">
+                            <input
+                              type="number"
+                              step="0.0001"
+                              min="0"
+                              placeholder="0.00"
+                              value={costPriceUSD}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                setCostPriceUSD(val);
+                                if (typeof val === 'number') {
+                                  setCostPriceVES(parseFloat((val * bcvUsd).toFixed(2)));
+                                  if (val > 0) {
+                                    const newSale = val * (1 + marginPercent / 100);
+                                    setSalePriceUSD(parseFloat(newSale.toFixed(2)));
+                                    setSalePriceVES(parseFloat((newSale * bcvUsd).toFixed(2)));
+                                  }
+                                }
+                              }}
+                              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                            />
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              ≈ {((typeof costPriceUSD === 'number' ? costPriceUSD : 0) * bcvUsd).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs VES
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="0.00"
+                              value={costPriceVES}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                setCostPriceVES(val);
+                                if (typeof val === 'number') {
+                                  const inUSD = parseFloat((val / bcvUsd).toFixed(4));
+                                  setCostPriceUSD(inUSD);
+                                  if (val > 0) {
+                                    const newSaleVES = val * (1 + marginPercent / 100);
+                                    setSalePriceVES(parseFloat(newSaleVES.toFixed(2)));
+                                    setSalePriceUSD(parseFloat((newSaleVES / bcvUsd).toFixed(2)));
+                                  }
+                                }
+                              }}
+                              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
+                            />
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              ≈ ${((typeof costPriceVES === 'number' ? costPriceVES : 0) / bcvUsd).toFixed(2)} USD
+                            </div>
+                          </div>
+                        )}
                       </div>
 
+                      {/* Sale Price Input */}
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                          Precio de Venta Base ($ USD por {unit}) <span className="text-rose-500">*</span>
+                          {currencyOrigin === 'USD'
+                            ? `Precio de Venta Base ($ USD por ${unit}) *`
+                            : `Precio de Venta Base (Bs VES por ${unit}) *`}
                         </label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          required
-                          placeholder="0.00"
-                          value={salePriceUSD}
-                          onChange={(e) => setSalePriceUSD(e.target.value === '' ? '' : parseFloat(e.target.value))}
-                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400 focus:outline-none focus:border-emerald-500"
-                        />
+                        {currencyOrigin === 'USD' ? (
+                          <div className="space-y-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              required
+                              placeholder="0.00"
+                              value={salePriceUSD}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                setSalePriceUSD(val);
+                                if (typeof val === 'number') {
+                                  setSalePriceVES(parseFloat((val * bcvUsd).toFixed(2)));
+                                }
+                              }}
+                              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400 focus:outline-none focus:border-emerald-500"
+                            />
+                            <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-semibold">
+                              ≈ {((typeof salePriceUSD === 'number' ? salePriceUSD : 0) * bcvUsd).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs VES
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              required
+                              placeholder="0.00"
+                              value={salePriceVES}
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                                setSalePriceVES(val);
+                                if (typeof val === 'number') {
+                                  setSalePriceUSD(parseFloat((val / bcvUsd).toFixed(2)));
+                                }
+                              }}
+                              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-bold text-blue-600 dark:text-blue-400 focus:outline-none focus:border-blue-500"
+                            />
+                            <div className="text-[10px] text-blue-600 dark:text-blue-400 font-mono font-semibold">
+                              ≈ ${((typeof salePriceVES === 'number' ? salePriceVES : 0) / bcvUsd).toFixed(2)} USD
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 

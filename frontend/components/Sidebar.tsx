@@ -36,6 +36,8 @@ import {
   ChevronLeft,
 } from 'lucide-react';
 
+import { useRouter } from 'next/navigation';
+
 export type SidebarAction =
   | 'catalog'
   | 'openInventory'
@@ -46,6 +48,7 @@ export type SidebarAction =
   | 'openPurchaseHistory'
   | 'openSuppliers'
   | 'openAddSupplier'
+  | 'openSuppliersModal'
   | 'openBcvHistory'
   | 'openProfitLoss'
   | 'openHrPayroll'
@@ -57,7 +60,7 @@ export type SidebarAction =
   | 'globalSettings';
 
 interface SidebarProps {
-  onAction: (action: SidebarAction) => void;
+  onAction?: (action: SidebarAction) => void;
   activeItem?: string;
   lowStockCount?: number;
   bcvUsd?: number;
@@ -82,8 +85,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
   bcvUsd,
 }) => {
   const { user } = useAuth();
+  const router = useRouter();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
+
+  const handleAction = (actionId: SidebarAction) => {
+    if (onAction) {
+      onAction(actionId);
+      return;
+    }
+    // Fallback default routing
+    switch (actionId) {
+      case 'catalog':
+        router.push('/adminnegocio');
+        break;
+      case 'openInventory':
+        router.push('/adminnegocio/inventario');
+        break;
+      case 'openNewProduct':
+        router.push('/adminnegocio/productos/nuevo');
+        break;
+      case 'openPurchaseModal':
+        router.push('/adminnegocio/compras/nueva');
+        break;
+      case 'openProfitLoss':
+        router.push('/adminnegocio/rentabilidad');
+        break;
+      case 'openHrPayroll':
+        router.push('/adminnegocio/rrhh');
+        break;
+      case 'posTerminal':
+        router.push('/pos');
+        break;
+      default:
+        router.push('/adminnegocio');
+    }
+  };
 
   if (!user) return null;
 
@@ -279,7 +316,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       return (
                         <button
                           key={item.id}
-                          onClick={() => onAction(item.id)}
+                          onClick={() => handleAction(item.id)}
                           title={item.label}
                           className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-medium transition-all text-left ${
                             isSelected

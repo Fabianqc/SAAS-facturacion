@@ -21,10 +21,12 @@ export interface Product {
   category?: Category;
   costPriceUSD: number;
   salePriceUSD: number;
-  profitUSD: number;
-  marginPercent: number;
+  currencyOrigin?: 'USD' | 'VES';
+  costPriceVES?: number;
   salePriceVES: number;
   salePriceEUR: number;
+  profitUSD: number;
+  marginPercent: number;
   taxType: TaxType;
   taxPercent: number;
   unit: string;

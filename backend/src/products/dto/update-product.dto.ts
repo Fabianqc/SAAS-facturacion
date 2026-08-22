@@ -32,6 +32,20 @@ export class UpdateProductDto {
   @IsOptional()
   salePriceUSD?: number;
 
+  @IsString()
+  @IsOptional()
+  currencyOrigin?: string; // 'USD' o 'VES'
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  costPriceVES?: number;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  salePriceVES?: number;
+
   @IsEnum(TaxType)
   @IsOptional()
   taxType?: TaxType;

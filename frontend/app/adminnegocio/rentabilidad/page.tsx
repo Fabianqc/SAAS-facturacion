@@ -5,8 +5,17 @@ import { useRouter } from 'next/navigation';
 import { RoleGuard } from '../../../components/RoleGuard';
 import { Navbar } from '../../../components/Navbar';
 import { Sidebar, SidebarAction } from '../../../components/Sidebar';
-import { useBcvRates, useProducts, useCategories, usePurchases, useMovements } from '../../../hooks/useApi';
+import {
+  useBcvRates,
+  useProducts,
+  useCategories,
+  usePnLSummary,
+  useFinancialTransactions,
+  useCreateFinancialTransaction,
+  useCancelFinancialTransaction,
+} from '../../../hooks/useApi';
 import { Product, Category } from '../../../types/product';
+import { TransactionType } from '../../../types/finance';
 import {
   TrendingUp,
   TrendingDown,
@@ -27,28 +36,121 @@ import {
   Edit,
   Sparkles,
   Percent,
+  Plus,
+  Calendar,
+  Building2,
+  FileText,
+  Trash2,
+  X,
+  Lock,
+  ArrowUpRight,
+  ArrowDownRight,
+  Wallet,
+  Users,
 } from 'lucide-react';
+
+const EXPENSE_CATEGORIES = [
+  'ALQUILER',
+  'SERVICIOS_PUBLICOS',
+  'MANTENIMIENTO',
+  'TRANSPORTE_FLETES',
+  'SUMINISTROS_EMPAQUES',
+  'PUBLICIDAD_MARKETING',
+  'IMPUESTOS_PATENTE',
+  'NOMINA_HONORARIOS',
+  'OTROS_GASTOS',
+];
+
+const INCOME_CATEGORIES = [
+  'VENTAS_POS',
+  'ALQUILER_ESPACIOS',
+  'COMISIONES_SERVICIOS',
+  'INTERESES_RENDIMIENTOS',
+  'OTROS_INGRESOS',
+];
 
 function ProfitAndLossPageContent() {
   const router = useRouter();
+
+  // Date Range Filter States
+  const [periodPreset, setPeriodPreset] = useState<'TODAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'ALL'>('MONTH');
+  const [startDate, setStartDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(1); // Primer día del mes actual
+    return d.toISOString().split('T')[0];
+  });
+  const [endDate, setEndDate] = useState<string>(() => {
+    return new Date().toISOString().split('T')[0];
+  });
 
   // React Query Hooks
   const { data: bcvRates } = useBcvRates();
   const { data: products = [], isLoading: isLoadingProducts } = useProducts();
   const { data: categories = [] } = useCategories();
-  const { data: purchases = [] } = usePurchases();
-  const { data: movements = [] } = useMovements({ limit: 200 });
+  const { data: pnlSummary, isLoading: isLoadingPnL } = usePnLSummary(
+    periodPreset === 'ALL' ? undefined : startDate,
+    periodPreset === 'ALL' ? undefined : endDate,
+  );
+  const { data: transactions = [], isLoading: isLoadingTx } = useFinancialTransactions({
+    startDate: periodPreset === 'ALL' ? undefined : startDate,
+    endDate: periodPreset === 'ALL' ? undefined : endDate,
+  });
+
+  // Mutations
+  const createTxMutation = useCreateFinancialTransaction();
+  const cancelTxMutation = useCancelFinancialTransaction();
 
   const bcvUsd = bcvRates?.usd || 775.3356;
   const bcvEur = bcvRates?.eur || 897.8231;
 
-  const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'statement'>('products');
+  // Active Tab: 'pnl_statement' | 'transactions' | 'products' | 'categories'
+  const [activeTab, setActiveTab] = useState<'pnl_statement' | 'transactions' | 'products' | 'categories'>('pnl_statement');
+
+  // Search & Filter States
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [marginStatusFilter, setMarginStatusFilter] = useState<'ALL' | 'LOSS' | 'LOW' | 'NORMAL' | 'HIGH'>('ALL');
+  const [txTypeFilter, setTxTypeFilter] = useState<'ALL' | 'INCOME' | 'EXPENSE'>('ALL');
 
-  // Interactive Target Margin Simulator
+  // Transaction Modal State
+  const [isTxModalOpen, setIsTxModalOpen] = useState(false);
+  const [txType, setTxType] = useState<TransactionType>('EXPENSE');
+  const [txCategory, setTxCategory] = useState('ALQUILER');
+  const [txCurrencyOrigin, setTxCurrencyOrigin] = useState<'USD' | 'VES'>('USD');
+  const [txAmountUSD, setTxAmountUSD] = useState<number | ''>(100);
+  const [txAmountVES, setTxAmountVES] = useState<number | ''>(100 * bcvUsd);
+  const [txExchangeRate, setTxExchangeRate] = useState<number>(bcvUsd);
+  const [txJustification, setTxJustification] = useState('');
+  const [txVoucherNumber, setTxVoucherNumber] = useState('');
+  const [txDate, setTxDate] = useState(new Date().toISOString().split('T')[0]);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Target Margin Simulator for Products
   const [simulatorTargetMargin, setSimulatorTargetMargin] = useState<number | null>(null);
+
+  // Handle Preset Period Change
+  const handlePresetChange = (preset: 'TODAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'ALL') => {
+    setPeriodPreset(preset);
+    const now = new Date();
+    if (preset === 'TODAY') {
+      const d = now.toISOString().split('T')[0];
+      setStartDate(d);
+      setEndDate(d);
+    } else if (preset === 'WEEK') {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 7);
+      setStartDate(d.toISOString().split('T')[0]);
+      setEndDate(now.toISOString().split('T')[0]);
+    } else if (preset === 'MONTH') {
+      const d = new Date(now.getFullYear(), now.getMonth(), 1);
+      setStartDate(d.toISOString().split('T')[0]);
+      setEndDate(now.toISOString().split('T')[0]);
+    } else if (preset === 'YEAR') {
+      const d = new Date(now.getFullYear(), 0, 1);
+      setStartDate(d.toISOString().split('T')[0]);
+      setEndDate(now.toISOString().split('T')[0]);
+    }
+  };
 
   // Products P&L Analysis Engine
   const analyzedProducts = useMemo(() => {
@@ -63,7 +165,6 @@ function ProfitAndLossPageContent() {
       const totalPotentialSalesUSD = sale * stock;
       const totalPotentialProfitUSD = profitUSD * stock;
 
-      // Simulated Target Price if user activates target margin
       let simulatedPriceUSD = sale;
       if (simulatorTargetMargin !== null) {
         simulatedPriceUSD = parseFloat((cost * (1 + simulatorTargetMargin / 100)).toFixed(2));
@@ -90,483 +191,592 @@ function ProfitAndLossPageContent() {
     });
   }, [products, simulatorTargetMargin]);
 
-  // Global Financial KPIs
-  const globalMetrics = useMemo(() => {
-    let totalInventoryCostUSD = 0;
-    let totalPotentialSalesUSD = 0;
-    let lossProductsCount = 0;
-    let lowMarginProductsCount = 0;
-
-    analyzedProducts.forEach((p) => {
-      totalInventoryCostUSD += p.totalValuationCostUSD;
-      totalPotentialSalesUSD += p.totalPotentialSalesUSD;
-      if (p.status === 'LOSS') lossProductsCount++;
-      if (p.status === 'LOW') lowMarginProductsCount++;
-    });
-
-    const totalPotentialProfitUSD = totalPotentialSalesUSD - totalInventoryCostUSD;
-    const averageMarginPercent =
-      totalInventoryCostUSD > 0 ? (totalPotentialProfitUSD / totalInventoryCostUSD) * 100 : 0;
-
-    // Total Purchases from Invoices
-    const totalPurchasesCostUSD = purchases.reduce((acc, inv) => acc + Number(inv.subtotalUSD || inv.totalUSD), 0);
-    const totalTaxCreditUSD = purchases.reduce((acc, inv) => acc + Number(inv.taxTotalUSD || 0), 0);
-
-    // Mermas / Shrinkage loss from Kardex
-    const shrinkageMovements = movements.filter(
-      (m) => m.type === 'OUT' && (m.reason?.toLowerCase().includes('merma') || m.reason?.toLowerCase().includes('vencimiento') || m.reason?.toLowerCase().includes('daño')),
-    );
-    const shrinkageUnits = shrinkageMovements.reduce((acc, m) => acc + m.quantity, 0);
-
-    return {
-      totalInventoryCostUSD,
-      totalPotentialSalesUSD,
-      totalPotentialProfitUSD,
-      averageMarginPercent,
-      lossProductsCount,
-      lowMarginProductsCount,
-      totalPurchasesCostUSD,
-      totalTaxCreditUSD,
-      shrinkageUnits,
-    };
-  }, [analyzedProducts, purchases, movements]);
-
-  // Category Profitability Breakdown
-  const categoryMetrics = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        id: string;
-        name: string;
-        productCount: number;
-        totalCostUSD: number;
-        totalSalesUSD: number;
-        totalProfitUSD: number;
-      }
-    >();
-
-    categories.forEach((c) => {
-      map.set(c.id, {
-        id: c.id,
-        name: c.name,
-        productCount: 0,
-        totalCostUSD: 0,
-        totalSalesUSD: 0,
-        totalProfitUSD: 0,
-      });
-    });
-
-    // Unassigned category
-    map.set('NONE', {
-      id: 'NONE',
-      name: 'Sin Categoría',
-      productCount: 0,
-      totalCostUSD: 0,
-      totalSalesUSD: 0,
-      totalProfitUSD: 0,
-    });
-
-    analyzedProducts.forEach((p) => {
-      const catKey = p.categoryId || 'NONE';
-      const entry = map.get(catKey) || map.get('NONE')!;
-      entry.productCount += 1;
-      entry.totalCostUSD += p.totalValuationCostUSD;
-      entry.totalSalesUSD += p.totalPotentialSalesUSD;
-      entry.totalProfitUSD += p.totalPotentialProfitUSD;
-    });
-
-    return Array.from(map.values())
-      .filter((c) => c.productCount > 0)
-      .map((c) => {
-        const marginPercent = c.totalCostUSD > 0 ? (c.totalProfitUSD / c.totalCostUSD) * 100 : 0;
-        const shareOfProfit =
-          globalMetrics.totalPotentialProfitUSD > 0
-            ? (c.totalProfitUSD / globalMetrics.totalPotentialProfitUSD) * 100
-            : 0;
-        return { ...c, marginPercent, shareOfProfit };
-      })
-      .sort((a, b) => b.totalProfitUSD - a.totalProfitUSD);
-  }, [analyzedProducts, categories, globalMetrics]);
-
-  // Filtered Products for Products Tab
-  const filteredProducts = useMemo(() => {
-    return analyzedProducts.filter((p) => {
-      const term = searchTerm.toLowerCase();
-      const matchSearch =
-        term === '' ||
-        p.name.toLowerCase().includes(term) ||
-        p.sku.toLowerCase().includes(term) ||
-        (p.barcode && p.barcode.includes(term));
-
-      const matchCat = selectedCategory === 'ALL' || p.categoryId === selectedCategory;
-
-      let matchMargin = true;
-      if (marginStatusFilter === 'LOSS') matchMargin = p.status === 'LOSS';
-      if (marginStatusFilter === 'LOW') matchMargin = p.status === 'LOW';
-      if (marginStatusFilter === 'NORMAL') matchMargin = p.status === 'NORMAL';
-      if (marginStatusFilter === 'HIGH') matchMargin = p.status === 'HIGH';
-
-      return matchSearch && matchCat && matchMargin;
-    });
-  }, [analyzedProducts, searchTerm, selectedCategory, marginStatusFilter]);
-
-  const handleSidebarAction = (action: SidebarAction) => {
-    if (action === 'catalog') {
-      router.push('/adminnegocio');
-    } else if (action === 'openInventory' || action === 'openStockModal') {
-      router.push('/adminnegocio/inventario');
-    } else if (action === 'openNewProduct') {
-      router.push('/adminnegocio/productos/nuevo');
-    } else if (action === 'openPurchaseModal') {
-      router.push('/adminnegocio/compras/nueva');
-    } else if (action === 'openProfitLoss') {
-      setActiveTab('products');
-    } else if (action === 'openHrPayroll') {
-      router.push('/adminnegocio/rrhh');
+  // Handle New Financial Transaction Submit
+  const handleTxSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!txJustification.trim()) {
+      setFormError('La justificación del movimiento es obligatoria');
+      return;
     }
+    const numUSD = typeof txAmountUSD === 'number' ? txAmountUSD : 0;
+    const numVES = typeof txAmountVES === 'number' ? txAmountVES : 0;
+    if (numUSD <= 0 && numVES <= 0) {
+      setFormError('El monto debe ser mayor a 0');
+      return;
+    }
+
+    setFormError(null);
+    createTxMutation.mutate(
+      {
+        type: txType,
+        category: txCategory,
+        currencyOrigin: txCurrencyOrigin,
+        amountUSD: numUSD,
+        amountVES: numVES,
+        exchangeRate: txExchangeRate,
+        justification: txJustification.trim(),
+        voucherNumber: txVoucherNumber.trim() || undefined,
+        date: txDate,
+      },
+      {
+        onSuccess: () => {
+          setIsTxModalOpen(false);
+          setTxJustification('');
+          setTxVoucherNumber('');
+        },
+        onError: (err: any) => {
+          setFormError(err.message || 'Error al guardar movimiento financiero');
+        },
+      },
+    );
   };
 
+  // Filtered Financial Transactions
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter((t) => {
+      const matchType = txTypeFilter === 'ALL' || t.type === txTypeFilter;
+      const matchSearch =
+        searchTerm === '' ||
+        t.justification.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        t.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (t.voucherNumber && t.voucherNumber.toLowerCase().includes(searchTerm.toLowerCase()));
+      return matchType && matchSearch;
+    });
+  }, [transactions, txTypeFilter, searchTerm]);
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col transition-colors">
-      <Navbar />
+    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 font-sans text-slate-800 dark:text-slate-100 overflow-hidden">
+      <Sidebar />
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* SIDEBAR */}
-        <Sidebar onAction={handleSidebarAction} activeItem="catalog" bcvUsd={bcvUsd} />
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        <Navbar />
 
-        {/* MAIN P&L HUB */}
-        <main className="flex-1 p-4 lg:p-8 max-w-7xl w-full mx-auto space-y-6 overflow-y-auto">
-          {/* Header Banner */}
-          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <main className="p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto space-y-6">
+          {/* HEADER & DATE RANGE FILTER BAR */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
             <div className="space-y-1">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 text-xs font-semibold">
-                <TrendingUp className="w-3.5 h-3.5" />
-                <span>Centro de Rentabilidad & P&L (Profit and Loss)</span>
+              <div className="flex items-center gap-2">
+                <span className="p-2 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400">
+                  <BarChart3 className="w-6 h-6" />
+                </span>
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                  Estado de Resultados & P&L Real
+                </h1>
               </div>
-              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white">
-                Análisis de Ganancias, Pérdidas & Márgenes Comerciales
-              </h1>
-              <p className="text-slate-500 dark:text-slate-400 text-xs sm:text-sm">
-                Control financiero de rentabilidad por producto, detección inmediata de ventas bajo costo y estado de resultados bi-moneda.
+              <p className="text-xs text-slate-500 max-w-2xl">
+                Contabilidad ejecutiva inmutable: ingresos reales, costos de compras, nómina, mermas y gastos justificados con congelamiento de tasa BCV histórica.
               </p>
             </div>
 
-            <div className="flex items-center gap-2.5">
-              <button
-                onClick={() => router.push('/adminnegocio/compras/nueva')}
-                className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs flex items-center gap-1.5 transition-all shadow-xs"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                <span>Ingresar Compra</span>
-              </button>
-
-              <button
-                onClick={() => router.push('/adminnegocio/productos/nuevo')}
-                className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-all"
-              >
-                <Package className="w-4 h-4" />
-                <span>Nuevo Producto</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Loss Warning Alert if Any */}
-          {globalMetrics.lossProductsCount > 0 && (
-            <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-300 text-xs font-semibold flex items-center justify-between gap-4 animate-fadeIn">
-              <div className="flex items-center gap-2.5">
-                <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
-                <span>
-                  ⚠️ Se detectaron <strong>{globalMetrics.lossProductsCount} productos con Venta a Pérdida</strong> (Precio de venta inferior al costo).
-                </span>
+            {/* Date Preset Selector */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => handlePresetChange('TODAY')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    periodPreset === 'TODAY' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  Hoy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePresetChange('WEEK')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    periodPreset === 'WEEK' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  7 Días
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePresetChange('MONTH')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    periodPreset === 'MONTH' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  Este Mes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePresetChange('YEAR')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    periodPreset === 'YEAR' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  Año en Curso
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePresetChange('ALL')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    periodPreset === 'ALL' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  Todo
+                </button>
               </div>
+
               <button
                 onClick={() => {
-                  setMarginStatusFilter('LOSS');
-                  setActiveTab('products');
+                  setTxType('EXPENSE');
+                  setTxCategory('ALQUILER');
+                  setTxExchangeRate(bcvUsd);
+                  setTxAmountUSD(50);
+                  setTxAmountVES(parseFloat((50 * bcvUsd).toFixed(2)));
+                  setIsTxModalOpen(true);
                 }}
-                className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shrink-0 transition-all shadow-xs"
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
               >
-                Filtrar y Corregir
+                <Plus className="w-4 h-4" />
+                <span>Registrar Gasto / Ingreso</span>
               </button>
-            </div>
-          )}
-
-          {/* Metric KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-1.5">
-              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-                <span>Utilidad Bruta Proyectada</span>
-                <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-              </div>
-              <span className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono">
-                +${globalMetrics.totalPotentialProfitUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-              </span>
-              <p className="text-xs text-slate-400 font-mono">
-                {(globalMetrics.totalPotentialProfitUSD * bcvUsd).toLocaleString('es-VE', { minimumFractionDigits: 2 })} VES (BCV {bcvUsd.toFixed(2)})
-              </p>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-1.5">
-              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-                <span>Margen Bruto Promedio</span>
-                <Percent className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              </div>
-              <span className="text-2xl font-extrabold text-blue-600 dark:text-blue-400 font-mono">
-                +{globalMetrics.averageMarginPercent.toFixed(1)}%
-              </span>
-              <p className="text-xs text-slate-400 font-medium">Rentabilidad media sobre costo</p>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-1.5">
-              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-                <span>Inversión en Inventario (Costo)</span>
-                <DollarSign className="w-4 h-4 text-slate-500" />
-              </div>
-              <span className="text-2xl font-bold text-slate-900 dark:text-white font-mono">
-                ${globalMetrics.totalInventoryCostUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-              </span>
-              <p className="text-xs text-slate-400 font-mono">
-                Valor venta: ${globalMetrics.totalPotentialSalesUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-              </p>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-1.5">
-              <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
-                <span>Alertas de Rentabilidad</span>
-                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className={`text-2xl font-bold font-mono ${globalMetrics.lossProductsCount > 0 ? 'text-rose-600' : 'text-slate-900 dark:text-white'}`}>
-                  {globalMetrics.lossProductsCount} Pérdida
-                </span>
-                <span className="text-xs text-amber-600 font-bold font-mono">({globalMetrics.lowMarginProductsCount} Bajo Margen)</span>
-              </div>
-              <p className="text-xs text-slate-400 font-medium">Requieren ajuste de precio</p>
             </div>
           </div>
 
-          {/* TAB NAVIGATION */}
-          <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2 text-xs font-bold">
+          {/* TOP SUMMARY CARDS (BI-MONEDA INMUTABLE) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* 1. Ingresos Totales */}
+            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+              <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+                <span>(+) Ingresos Totales</span>
+                <span className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600">
+                  <ArrowUpRight className="w-4 h-4" />
+                </span>
+              </div>
+              <div>
+                <div className="text-2xl font-mono font-extrabold text-slate-900 dark:text-white">
+                  ${(pnlSummary?.inflows.totalGrossIncomeUSD || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                  {(pnlSummary?.inflows.totalGrossIncomeVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs VES
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                {pnlSummary?.inflows.salesCount || 0} ventas + {pnlSummary?.inflows.extraIncomesCount || 0} ingresos extras
+              </div>
+            </div>
+
+            {/* 2. Costos de Compras & Mercancía */}
+            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+              <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+                <span>(-) Compras a Proveedores</span>
+                <span className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600">
+                  <Package className="w-4 h-4" />
+                </span>
+              </div>
+              <div>
+                <div className="text-2xl font-mono font-extrabold text-slate-900 dark:text-white">
+                  ${(pnlSummary?.outflows.purchasesUSD || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400">
+                  {(pnlSummary?.outflows.purchasesVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs VES
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400">
+                {pnlSummary?.outflows.purchasesCount || 0} facturas de compra recibidas
+              </div>
+            </div>
+
+            {/* 3. Nómina & Gastos Operativos */}
+            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-2">
+              <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+                <span>(-) Nómina + Gastos + Mermas</span>
+                <span className="p-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-600">
+                  <ArrowDownRight className="w-4 h-4" />
+                </span>
+              </div>
+              <div>
+                <div className="text-2xl font-mono font-extrabold text-slate-900 dark:text-white">
+                  ${(pnlSummary?.outflows.totalOperatingCostsUSD || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                  {(pnlSummary?.outflows.totalOperatingCostsVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs VES
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                <span>Nómina: ${(pnlSummary?.outflows.payrollUSD || 0).toFixed(2)}</span>
+                <span>•</span>
+                <span>Gastos: ${(pnlSummary?.outflows.operatingExpensesUSD || 0).toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* 4. UTILIDAD NETA OPERATIVA (P&L REAL) */}
+            <div className={`p-5 rounded-2xl border shadow-sm space-y-2 ${
+              (pnlSummary?.results.netOperatingProfitUSD || 0) >= 0
+                ? 'bg-emerald-50/70 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800'
+                : 'bg-rose-50/70 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800'
+            }`}>
+              <div className="flex items-center justify-between text-xs font-bold">
+                <span className={pnlSummary?.results.isProfitable ? 'text-emerald-800 dark:text-emerald-300' : 'text-rose-800 dark:text-rose-300'}>
+                  (=) Utilidad Neta Real
+                </span>
+                <span className="p-1.5 rounded-lg bg-white dark:bg-slate-900 shadow-xs">
+                  {pnlSummary?.results.isProfitable ? (
+                    <TrendingUp className="w-4 h-4 text-emerald-600" />
+                  ) : (
+                    <TrendingDown className="w-4 h-4 text-rose-600" />
+                  )}
+                </span>
+              </div>
+              <div>
+                <div className={`text-2xl font-mono font-extrabold ${
+                  pnlSummary?.results.isProfitable ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'
+                }`}>
+                  ${(pnlSummary?.results.netOperatingProfitUSD || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-xs font-mono font-bold">
+                  {(pnlSummary?.results.netOperatingProfitVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs VES
+                </div>
+              </div>
+              <div className="text-[10px] font-semibold text-slate-600 dark:text-slate-400">
+                Margen Operativo: <strong className="font-mono">{pnlSummary?.results.operatingMarginPercent || 0}%</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* NAVIGATION TABS */}
+          <div className="flex border-b border-slate-200 dark:border-slate-800 gap-2">
             <button
-              onClick={() => setActiveTab('products')}
-              className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 ${
-                activeTab === 'products'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+              onClick={() => setActiveTab('pnl_statement')}
+              className={`px-4 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
+                activeTab === 'pnl_statement'
+                  ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
-              <BarChart3 className="w-4 h-4" />
-              <span>Rentabilidad por Producto ({filteredProducts.length})</span>
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>Estado de Resultados (P&L Integral)</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('transactions')}
+              className={`px-4 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
+                activeTab === 'transactions'
+                  ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Wallet className="w-4 h-4" />
+              <span>Gastos & Ingresos Justificados ({transactions.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('products')}
+              className={`px-4 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
+                activeTab === 'products'
+                  ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Package className="w-4 h-4" />
+              <span>Margen por Producto & Semáforo</span>
             </button>
 
             <button
               onClick={() => setActiveTab('categories')}
-              className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 ${
+              className={`px-4 py-3 text-xs font-bold border-b-2 transition-all flex items-center gap-2 ${
                 activeTab === 'categories'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
-              <PieChart className="w-4 h-4" />
-              <span>Margen por Categoría ({categoryMetrics.length})</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('statement')}
-              className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 ${
-                activeTab === 'statement'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              <Receipt className="w-4 h-4" />
-              <span>Estado de Resultados (P&L Bi-Moneda)</span>
+              <Layers className="w-4 h-4" />
+              <span>Rentabilidad por Categoría</span>
             </button>
           </div>
 
-          {/* TAB 1: RENTABILIDAD POR PRODUCTO */}
-          {activeTab === 'products' && (
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
-              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          {/* TAB 1: ESTADO DE RESULTADOS INTEGRAL (P&L REAL) */}
+          {activeTab === 'pnl_statement' && (
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
                 <div>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">Margen & Beneficio por Producto</h3>
-                  <p className="text-xs text-slate-500">Costo de compra, precio de venta, margen bruto y utilidad potencial</p>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Estado Financiero de Ganancias & Pérdidas (P&L)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Cálculo basado estrictamente en las tasas históricas congeladas de cada movimiento de dinero
+                  </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-                  {/* Search */}
-                  <div className="relative flex-1 sm:w-64">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      placeholder="Buscar SKU, producto..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3.5 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
-                    />
-                  </div>
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs">
+                  <Lock className="w-4 h-4 text-emerald-600" />
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    Inmutabilidad Garantizada: Sumatoria directa $ USD y Bs VES
+                  </span>
+                </div>
+              </div>
 
-                  {/* Category Filter */}
-                  <select
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-700 dark:text-slate-200 focus:outline-none"
-                  >
-                    <option value="ALL">Todas las Categorías</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
+              {/* P&L Breakdown Table */}
+              <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-200 dark:border-slate-800">
+                    <tr>
+                      <th className="p-3.5">Rubro Contable</th>
+                      <th className="p-3.5">Detalle / Operaciones</th>
+                      <th className="p-3.5 text-right">Monto ($ USD Histórico)</th>
+                      <th className="p-3.5 text-right">Monto (Bs VES Histórico)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+                    {/* INFLOWS */}
+                    <tr className="bg-emerald-50/40 dark:bg-emerald-950/20 font-bold text-emerald-900 dark:text-emerald-300">
+                      <td className="p-3.5" colSpan={4}>
+                        (+) 1. INGRESOS OPERATIVOS BRUTOS
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3.5 pl-8 font-semibold">Ventas Facturadas POS / SENIAT</td>
+                      <td className="p-3.5 text-slate-500">{pnlSummary?.inflows.salesCount || 0} facturas de venta</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-emerald-600">
+                        +${(pnlSummary?.inflows.salesUSD || 0).toFixed(2)}
+                      </td>
+                      <td className="p-3.5 text-right font-mono font-bold text-emerald-600">
+                        +{(pnlSummary?.inflows.salesVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3.5 pl-8 font-semibold">Ingresos Extraordinarios Justificados</td>
+                      <td className="p-3.5 text-slate-500">{pnlSummary?.inflows.extraIncomesCount || 0} asientos justificados</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-emerald-600">
+                        +${(pnlSummary?.inflows.extraIncomesUSD || 0).toFixed(2)}
+                      </td>
+                      <td className="p-3.5 text-right font-mono font-bold text-emerald-600">
+                        +{(pnlSummary?.inflows.extraIncomesVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
+                      </td>
+                    </tr>
+
+                    {/* COST OF GOODS SOLD */}
+                    <tr className="bg-blue-50/40 dark:bg-blue-950/20 font-bold text-blue-900 dark:text-blue-300">
+                      <td className="p-3.5" colSpan={4}>
+                        (-) 2. COSTO DE MERCANCÍA / COMPRAS
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3.5 pl-8 font-semibold">Compras a Proveedores Recibidas</td>
+                      <td className="p-3.5 text-slate-500">{pnlSummary?.outflows.purchasesCount || 0} facturas de compra</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-600">
+                        -${(pnlSummary?.outflows.purchasesUSD || 0).toFixed(2)}
+                      </td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-600">
+                        -{(pnlSummary?.outflows.purchasesVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
+                      </td>
+                    </tr>
+
+                    {/* GROSS PROFIT SUB-ROW */}
+                    <tr className="bg-slate-100 dark:bg-slate-800 font-bold text-slate-900 dark:text-white">
+                      <td className="p-3.5" colSpan={2}>
+                        (=) MARGEN BRUTO MERCANTIL (Ingresos - Compras)
+                      </td>
+                      <td className="p-3.5 text-right font-mono font-bold">
+                        ${(pnlSummary?.results.grossProfitUSD || 0).toFixed(2)}
+                      </td>
+                      <td className="p-3.5 text-right font-mono font-bold">
+                        {(pnlSummary?.results.grossProfitVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
+                      </td>
+                    </tr>
+
+                    {/* OPERATING EXPENSES & PAYROLL */}
+                    <tr className="bg-amber-50/40 dark:bg-amber-950/20 font-bold text-amber-900 dark:text-amber-300">
+                      <td className="p-3.5" colSpan={4}>
+                        (-) 3. GASTOS OPERATIVOS, LABORALES & MERMAS
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3.5 pl-8 font-semibold">Nómina y Salarios Liquidados</td>
+                      <td className="p-3.5 text-slate-500">{pnlSummary?.outflows.payrollReceiptsCount || 0} recibos de pago</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-600">
+                        -${(pnlSummary?.outflows.payrollUSD || 0).toFixed(2)}
+                      </td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-600">
+                        -{(pnlSummary?.outflows.payrollVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3.5 pl-8 font-semibold">Gastos Operativos Justificados (Luz, Alquiler, etc.)</td>
+                      <td className="p-3.5 text-slate-500">{pnlSummary?.outflows.operatingExpensesCount || 0} gastos registrados</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-600">
+                        -${(pnlSummary?.outflows.operatingExpensesUSD || 0).toFixed(2)}
+                      </td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-600">
+                        -{(pnlSummary?.outflows.operatingExpensesVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3.5 pl-8 font-semibold">Pérdidas por Mermas y Roturas (Kardex)</td>
+                      <td className="p-3.5 text-slate-500">{pnlSummary?.outflows.mermasCount || 0} salidas/desechos</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-600">
+                        -${(pnlSummary?.outflows.mermasUSD || 0).toFixed(2)}
+                      </td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-600">
+                        -{(pnlSummary?.outflows.mermasVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
+                      </td>
+                    </tr>
+
+                    {/* NET OPERATING PROFIT FINAL TOTAL */}
+                    <tr className={`font-extrabold text-sm ${
+                      (pnlSummary?.results.netOperatingProfitUSD || 0) >= 0
+                        ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-200'
+                        : 'bg-rose-100 dark:bg-rose-950/80 text-rose-900 dark:text-rose-200'
+                    }`}>
+                      <td className="p-4" colSpan={2}>
+                        (=) UTILIDAD NETA OPERATIVA REAL (P&L FINAL)
+                      </td>
+                      <td className="p-4 text-right font-mono text-base">
+                        ${(pnlSummary?.results.netOperatingProfitUSD || 0).toFixed(2)}
+                      </td>
+                      <td className="p-4 text-right font-mono text-base">
+                        {(pnlSummary?.results.netOperatingProfitVES || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Breakdown by Expense Category */}
+              {pnlSummary?.expensesByCategory && pnlSummary.expensesByCategory.length > 0 && (
+                <div className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                  <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    Desglose de Gastos Operativos por Categoría
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {pnlSummary.expensesByCategory.map((c) => (
+                      <div
+                        key={c.category}
+                        className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex justify-between items-center text-xs"
+                      >
+                        <div>
+                          <span className="font-bold text-slate-900 dark:text-white block">{c.category}</span>
+                          <span className="text-[10px] text-slate-400">{c.count} registros</span>
+                        </div>
+                        <div className="text-right font-mono">
+                          <span className="font-bold text-rose-600 block">${c.amountUSD.toFixed(2)}</span>
+                          <span className="text-[10px] text-slate-400">{c.amountVES.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs</span>
+                        </div>
+                      </div>
                     ))}
-                  </select>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
-                  {/* Margin Status Filter */}
+          {/* TAB 2: GASTOS & INGRESOS JUSTIFICADOS */}
+          {activeTab === 'transactions' && (
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Libro de Gastos & Ingresos Justificados
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Registro auditable con número de comprobante, justificación y congelamiento de tasa BCV
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
                   <select
-                    value={marginStatusFilter}
-                    onChange={(e) => setMarginStatusFilter(e.target.value as any)}
-                    className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-700 dark:text-slate-200 focus:outline-none font-bold"
+                    value={txTypeFilter}
+                    onChange={(e) => setTxTypeFilter(e.target.value as any)}
+                    className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold"
                   >
-                    <option value="ALL">Todos los Márgenes</option>
-                    <option value="LOSS">🔴 ¡Solo Pérdidas! (&lt;0%)</option>
-                    <option value="LOW">🟠 Bajo Margen (&lt;15%)</option>
-                    <option value="NORMAL">🟡 Margen Normal (15-35%)</option>
-                    <option value="HIGH">🟢 Alto Margen (&gt;35%)</option>
+                    <option value="ALL">Todos los Movimientos</option>
+                    <option value="EXPENSE">Solo Gastos (-)</option>
+                    <option value="INCOME">Solo Ingresos (+)</option>
                   </select>
+
+                  <button
+                    onClick={() => {
+                      setTxType('EXPENSE');
+                      setIsTxModalOpen(true);
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Nuevo Movimiento</span>
+                  </button>
                 </div>
               </div>
 
-              {/* SIMULADOR DE MÁRGENES OBJETIVO */}
-              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300">
-                  <Sparkles className="w-4 h-4 text-purple-600" />
-                  <span>Simulador Rápido de Precios con Margen Objetivo:</span>
+              {filteredTransactions.length === 0 ? (
+                <div className="py-16 text-center text-slate-500 text-xs">
+                  No se encontraron movimientos financieros en el periodo seleccionado.
                 </div>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {[20, 25, 30, 40, 50, 100].map((pct) => (
-                    <button
-                      key={pct}
-                      onClick={() => setSimulatorTargetMargin(simulatorTargetMargin === pct ? null : pct)}
-                      className={`px-2.5 py-1 rounded-lg font-mono font-bold text-xs transition-all ${
-                        simulatorTargetMargin === pct
-                          ? 'bg-purple-600 text-white shadow-xs'
-                          : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
-                      }`}
-                    >
-                      +{pct}%
-                    </button>
-                  ))}
-                  {simulatorTargetMargin !== null && (
-                    <button
-                      onClick={() => setSimulatorTargetMargin(null)}
-                      className="text-xs text-rose-500 hover:underline font-semibold ml-1"
-                    >
-                      Restablecer
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {filteredProducts.length === 0 ? (
-                <div className="py-16 text-center text-slate-500 text-xs">No se encontraron productos con los filtros seleccionados.</div>
               ) : (
                 <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-200 dark:border-slate-800">
                       <tr>
-                        <th className="p-3.5">SKU</th>
-                        <th className="p-3.5">Producto & Categoría</th>
-                        <th className="p-3.5">Costo Unit. ($)</th>
-                        <th className="p-3.5">P. Venta Actual ($)</th>
-                        {simulatorTargetMargin !== null && (
-                          <th className="p-3.5 text-purple-600 dark:text-purple-400">P. Simulado (+{simulatorTargetMargin}%)</th>
-                        )}
-                        <th className="p-3.5">Margen Comercial</th>
-                        <th className="p-3.5">Ganancia / Unidad ($)</th>
-                        <th className="p-3.5">Stock</th>
-                        <th className="p-3.5">Utilidad Total Stock ($)</th>
-                        <th className="p-3.5 text-right">Acción</th>
+                        <th className="p-3.5">Fecha</th>
+                        <th className="p-3.5">Tipo</th>
+                        <th className="p-3.5">Categoría</th>
+                        <th className="p-3.5">Justificación & Comprobante</th>
+                        <th className="p-3.5 text-right">Monto ($ USD)</th>
+                        <th className="p-3.5 text-right">Monto (Bs VES)</th>
+                        <th className="p-3.5 text-right">Tasa Congelada</th>
+                        <th className="p-3.5 w-10"></th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300">
-                      {filteredProducts.map((p) => {
-                        return (
-                          <tr key={p.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 ${p.status === 'LOSS' ? 'bg-rose-50/30 dark:bg-rose-950/20' : ''}`}>
-                            <td className="p-3.5 font-mono font-bold text-slate-900 dark:text-white">
-                              {p.sku}
-                            </td>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+                      {filteredTransactions.map((tx) => (
+                        <tr key={tx.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                          <td className="p-3.5 font-mono text-slate-500">
+                            {new Date(tx.date).toLocaleDateString('es-VE')}
+                          </td>
 
-                            <td className="p-3.5">
-                              <span className="font-semibold text-slate-900 dark:text-white block">{p.name}</span>
-                              <span className="text-[10px] text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded inline-block mt-0.5">
-                                {p.categoryName || 'Sin Categoría'}
+                          <td className="p-3.5">
+                            {tx.type === 'INCOME' ? (
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold text-[10px] border border-emerald-200 dark:border-emerald-800">
+                                + INGRESO
                               </span>
-                            </td>
-
-                            <td className="p-3.5 font-mono text-slate-600 dark:text-slate-400">
-                              ${p.cost.toFixed(2)}
-                            </td>
-
-                            <td className="p-3.5 font-mono font-bold">
-                              ${p.sale.toFixed(2)}
-                            </td>
-
-                            {simulatorTargetMargin !== null && (
-                              <td className="p-3.5 font-mono font-bold text-purple-600 dark:text-purple-400">
-                                ${p.simulatedPriceUSD.toFixed(2)}
-                              </td>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold text-[10px] border border-rose-200 dark:border-rose-800">
+                                - GASTO
+                              </span>
                             )}
+                          </td>
 
-                            <td className="p-3.5">
-                              {p.status === 'LOSS' ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold text-[10px] border border-rose-300 dark:border-rose-800">
-                                  <TrendingDown className="w-3 h-3 text-rose-600" />
-                                  {p.marginPercent.toFixed(1)}% (Pérdida)
-                                </span>
-                              ) : p.status === 'LOW' ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-semibold text-[10px] border border-amber-300 dark:border-amber-800">
-                                  +{p.marginPercent.toFixed(1)}% (Bajo)
-                                </span>
-                              ) : p.status === 'HIGH' ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-bold text-[10px] border border-emerald-300 dark:border-emerald-800">
-                                  <TrendingUp className="w-3 h-3 text-emerald-600" />
-                                  +{p.marginPercent.toFixed(1)}% (Alto)
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold text-[10px] border border-blue-200 dark:border-blue-800">
-                                  +{p.marginPercent.toFixed(1)}%
-                                </span>
-                              )}
-                            </td>
+                          <td className="p-3.5 font-bold text-slate-900 dark:text-white">
+                            {tx.category}
+                          </td>
 
-                            <td className="p-3.5 font-mono font-semibold">
-                              <span className={p.profitUSD < 0 ? 'text-rose-600' : 'text-emerald-600 dark:text-emerald-400'}>
-                                {p.profitUSD >= 0 ? `+$${p.profitUSD.toFixed(2)}` : `-$${Math.abs(p.profitUSD).toFixed(2)}`}
+                          <td className="p-3.5">
+                            <span className="block font-medium">{tx.justification}</span>
+                            {tx.voucherNumber && (
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                Comp: {tx.voucherNumber}
                               </span>
-                            </td>
+                            )}
+                          </td>
 
-                            <td className="p-3.5 font-mono text-slate-500">
-                              {p.stock} {p.unit}
-                            </td>
+                          <td className={`p-3.5 text-right font-mono font-bold ${
+                            tx.type === 'INCOME' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                          }`}>
+                            {tx.type === 'INCOME' ? '+' : '-'}${Number(tx.amountUSD).toFixed(2)}
+                          </td>
 
-                            <td className="p-3.5 font-mono font-bold text-slate-900 dark:text-white">
-                              <span className={p.totalPotentialProfitUSD < 0 ? 'text-rose-600' : 'text-emerald-600 dark:text-emerald-400'}>
-                                {p.totalPotentialProfitUSD >= 0
-                                  ? `+$${p.totalPotentialProfitUSD.toFixed(2)}`
-                                  : `-$${Math.abs(p.totalPotentialProfitUSD).toFixed(2)}`}
-                              </span>
-                            </td>
+                          <td className={`p-3.5 text-right font-mono font-bold ${
+                            tx.type === 'INCOME' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                          }`}>
+                            {tx.type === 'INCOME' ? '+' : '-'}{Number(tx.amountVES).toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs
+                          </td>
 
-                            <td className="p-3.5 text-right">
-                              <button
-                                onClick={() => router.push(`/adminnegocio/productos/nuevo?editId=${p.id}`)}
-                                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 text-xs font-semibold"
-                              >
-                                Editar Precio
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                          <td className="p-3.5 text-right font-mono text-[11px] text-slate-500">
+                            {Number(tx.exchangeRate).toFixed(4)}
+                          </td>
+
+                          <td className="p-3.5 text-right">
+                            <button
+                              onClick={() => cancelTxMutation.mutate(tx.id)}
+                              title="Anular movimiento (Soft-delete)"
+                              className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -574,189 +784,384 @@ function ProfitAndLossPageContent() {
             </div>
           )}
 
-          {/* TAB 2: MARGEN POR CATEGORÍA */}
-          {activeTab === 'categories' && (
+          {/* TAB 3: MARGEN POR PRODUCTO & SEMÁFORO */}
+          {activeTab === 'products' && (
             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">Rentabilidad & Margen por Categoría</h3>
-                <p className="text-xs text-slate-500">Aporte porcentual al beneficio bruto global y rendimiento de cada familia de productos</p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Análisis Comercial & Margen por Producto
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Detector de ventas a pérdida y simulador de margen objetivo
+                  </p>
+                </div>
+
+                {/* Search and Filters */}
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Buscar SKU o nombre..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs font-medium text-slate-900 dark:text-white focus:outline-none"
+                    />
+                  </div>
+
+                  <select
+                    value={marginStatusFilter}
+                    onChange={(e) => setMarginStatusFilter(e.target.value as any)}
+                    className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold"
+                  >
+                    <option value="ALL">Todos los Márgenes</option>
+                    <option value="LOSS">⚠️ En Pérdida (&lt; 0%)</option>
+                    <option value="LOW">Margen Bajo (&lt; 15%)</option>
+                    <option value="NORMAL">Margen Sólido (15% - 35%)</option>
+                    <option value="HIGH">Margen Alto (&gt; 35%)</option>
+                  </select>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {categoryMetrics.map((c) => (
-                  <div key={c.id} className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-sm text-slate-900 dark:text-white">{c.name}</span>
-                      <span className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800">
-                        {c.productCount} Artículos
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5 text-xs pt-1 border-t border-slate-200 dark:border-slate-700">
-                      <div className="flex justify-between text-slate-500">
-                        <span>Inversión al Costo:</span>
-                        <span className="font-mono font-bold text-slate-700 dark:text-slate-300">${c.totalCostUSD.toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between text-slate-500">
-                        <span>Valoración en Venta:</span>
-                        <span className="font-mono font-bold text-slate-700 dark:text-slate-300">${c.totalSalesUSD.toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between items-baseline pt-1 border-t border-slate-200 dark:border-slate-700">
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">Utilidad Proyectada:</span>
-                        <span className="font-mono font-extrabold text-emerald-600 dark:text-emerald-400 text-sm">
-                          +${c.totalProfitUSD.toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Progress Bar of Profit Share */}
-                    <div className="space-y-1 pt-1">
-                      <div className="flex justify-between text-[11px]">
-                        <span className="text-slate-400">Margen Promedio:</span>
-                        <span className="font-mono font-bold text-slate-900 dark:text-white">+{c.marginPercent.toFixed(1)}%</span>
-                      </div>
-                      <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                        <div
-                          className="bg-emerald-500 h-full rounded-full"
-                          style={{ width: `${Math.min(Math.max(c.shareOfProfit, 0), 100)}%` }}
-                        ></div>
-                      </div>
-                      <span className="text-[10px] text-slate-400 text-right block">
-                        Aporta el {c.shareOfProfit.toFixed(1)}% de la ganancia del negocio
-                      </span>
-                    </div>
-                  </div>
-                ))}
+              {/* Products Table */}
+              <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-200 dark:border-slate-800">
+                    <tr>
+                      <th className="p-3.5">Producto</th>
+                      <th className="p-3.5">SKU</th>
+                      <th className="p-3.5 text-right">Costo Unit. ($)</th>
+                      <th className="p-3.5 text-right">Precio Venta ($)</th>
+                      <th className="p-3.5 text-right">Ganancia ($)</th>
+                      <th className="p-3.5 text-right">Margen (%)</th>
+                      <th className="p-3.5 text-right">Stock</th>
+                      <th className="p-3.5 text-right">Valor Potencial</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
+                    {analyzedProducts
+                      .filter((p) => {
+                        const matchSearch =
+                          searchTerm === '' ||
+                          p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          p.sku.toLowerCase().includes(searchTerm.toLowerCase());
+                        const matchStatus = marginStatusFilter === 'ALL' || p.status === marginStatusFilter;
+                        return matchSearch && matchStatus;
+                      })
+                      .map((p) => (
+                        <tr key={p.id} className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+                          p.status === 'LOSS' ? 'bg-rose-50/40 dark:bg-rose-950/20' : ''
+                        }`}>
+                          <td className="p-3.5 font-bold text-slate-900 dark:text-white">
+                            {p.name}
+                          </td>
+                          <td className="p-3.5 font-mono text-slate-500">{p.sku}</td>
+                          <td className="p-3.5 text-right font-mono text-slate-600 dark:text-slate-400">
+                            ${p.cost.toFixed(2)}
+                          </td>
+                          <td className="p-3.5 text-right font-mono font-bold text-slate-900 dark:text-white">
+                            ${p.sale.toFixed(2)}
+                          </td>
+                          <td className={`p-3.5 text-right font-mono font-bold ${
+                            p.profitUSD >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                          }`}>
+                            ${p.profitUSD.toFixed(2)}
+                          </td>
+                          <td className="p-3.5 text-right">
+                            <span className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] ${
+                              p.status === 'LOSS'
+                                ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                                : p.status === 'LOW'
+                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                            }`}>
+                              {p.marginPercent.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-right font-mono">{p.stock}</td>
+                          <td className="p-3.5 text-right font-mono font-bold text-slate-900 dark:text-white">
+                            ${p.totalPotentialSalesUSD.toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
 
-          {/* TAB 3: ESTADO DE RESULTADOS (P&L STATEMENT) */}
-          {activeTab === 'statement' && (
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-6 max-w-4xl mx-auto">
-              <div className="border-b border-slate-100 dark:border-slate-800 pb-3 flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <Receipt className="w-5 h-5 text-emerald-600" /> Estado de Resultados P&L (Estructura Financiera)
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Proyección operativa formal con deducción de mermas y balance de crédito fiscal SENIAT
-                  </p>
-                </div>
-                <span className="text-xs font-mono font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 px-3 py-1 rounded-lg border border-blue-200 dark:border-blue-800">
-                  Tasa Oficial BCV: {bcvUsd.toFixed(2)} Bs
-                </span>
-              </div>
+          {/* TAB 4: RENTABILIDAD POR CATEGORÍA */}
+          {activeTab === 'categories' && (
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                Rendimiento Comercial por Categoría
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {categories.map((cat) => {
+                  const catProducts = analyzedProducts.filter((p) => p.categoryId === cat.id);
+                  const totalCost = catProducts.reduce((sum, p) => sum + p.totalValuationCostUSD, 0);
+                  const totalSales = catProducts.reduce((sum, p) => sum + p.totalPotentialSalesUSD, 0);
+                  const totalProfit = totalSales - totalCost;
+                  const avgMargin = totalCost > 0 ? (totalProfit / totalCost) * 100 : 0;
 
-              {/* P&L Financial Ledger Table */}
-              <div className="border border-slate-200 dark:border-slate-800 rounded-xl divide-y divide-slate-200 dark:divide-slate-800 text-xs">
-                {/* 1. Ingresos Brutos */}
-                <div className="p-4 flex items-center justify-between bg-slate-50/60 dark:bg-slate-800/40">
-                  <div className="space-y-0.5">
-                    <span className="font-bold text-slate-900 dark:text-white text-sm block">
-                      (+) Ingresos Brutos Proyectados por Ventas
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      Totalidad del valor comercializable del inventario actual
-                    </span>
-                  </div>
-                  <div className="text-right font-mono">
-                    <span className="font-bold text-sm text-slate-900 dark:text-white block">
-                      ${globalMetrics.totalPotentialSalesUSD.toFixed(2)} USD
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      ≈ {(globalMetrics.totalPotentialSalesUSD * bcvUsd).toLocaleString('es-VE')} VES
-                    </span>
-                  </div>
-                </div>
-
-                {/* 2. Costo de Mercancía Vendida (COGS) */}
-                <div className="p-4 flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="font-semibold text-rose-600 dark:text-rose-400 block">
-                      (-) Costo de Adquisición de Mercancía (COGS)
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      Costo directo pagado a proveedores según facturas de compra
-                    </span>
-                  </div>
-                  <div className="text-right font-mono">
-                    <span className="font-bold text-rose-600 dark:text-rose-400 block">
-                      -${globalMetrics.totalInventoryCostUSD.toFixed(2)} USD
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      ≈ {(globalMetrics.totalInventoryCostUSD * bcvUsd).toLocaleString('es-VE')} VES
-                    </span>
-                  </div>
-                </div>
-
-                {/* 3. Utilidad Bruta */}
-                <div className="p-4 flex items-center justify-between bg-emerald-50/50 dark:bg-emerald-950/30">
-                  <div className="space-y-0.5">
-                    <span className="font-extrabold text-emerald-700 dark:text-emerald-300 text-sm block">
-                      (=) UTILIDAD BRUTA ESTIMADA
-                    </span>
-                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                      Margen Bruto General: +{globalMetrics.averageMarginPercent.toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="text-right font-mono">
-                    <span className="font-extrabold text-base text-emerald-600 dark:text-emerald-400 block">
-                      +${globalMetrics.totalPotentialProfitUSD.toFixed(2)} USD
-                    </span>
-                    <span className="text-[10px] text-emerald-700 dark:text-emerald-300">
-                      ≈ {(globalMetrics.totalPotentialProfitUSD * bcvUsd).toLocaleString('es-VE')} VES
-                    </span>
-                  </div>
-                </div>
-
-                {/* 4. Mermas & Pérdidas en Almacén */}
-                <div className="p-4 flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="font-semibold text-slate-700 dark:text-slate-300 block">
-                      (-) Impacto por Mermas / Vencimientos (Kardex)
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      {globalMetrics.shrinkageUnits} unidades descargadas por caducidad o merma
-                    </span>
-                  </div>
-                  <div className="text-right font-mono text-slate-600 dark:text-slate-400">
-                    <span>Auditado en Kardex</span>
-                  </div>
-                </div>
-
-                {/* 5. Posición Fiscal SENIAT */}
-                <div className="p-4 flex items-center justify-between bg-blue-50/40 dark:bg-blue-950/30">
-                  <div className="space-y-0.5">
-                    <span className="font-bold text-blue-900 dark:text-blue-300 block">
-                      Crédito Fiscal IVA Deducible (Facturas Proveedor)
-                    </span>
-                    <span className="text-[11px] text-blue-700 dark:text-blue-400">
-                      IVA crédito acumulado para compensación fiscal SENIAT
-                    </span>
-                  </div>
-                  <div className="text-right font-mono">
-                    <span className="font-bold text-blue-600 dark:text-blue-400 block">
-                      ${globalMetrics.totalTaxCreditUSD.toFixed(2)} USD
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      ≈ {(globalMetrics.totalTaxCreditUSD * bcvUsd).toLocaleString('es-VE')} VES
-                    </span>
-                  </div>
-                </div>
+                  return (
+                    <div
+                      key={cat.id}
+                      className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3"
+                    >
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-sm text-slate-900 dark:text-white">{cat.name}</span>
+                        <span className="text-xs font-mono font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded">
+                          {avgMargin.toFixed(1)}% Margen
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-500 space-y-1">
+                        <div className="flex justify-between">
+                          <span>Productos:</span>
+                          <span className="font-mono font-bold">{catProducts.length}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Venta Estimada:</span>
+                          <span className="font-mono font-bold">${totalSales.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Ganancia Potencial:</span>
+                          <span className="font-mono font-bold text-emerald-600">${totalProfit.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
         </main>
       </div>
+
+      {/* MODAL: REGISTRAR GASTO O INGRESO JUSTIFICADO */}
+      {isTxModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 max-w-lg w-full p-6 space-y-5 shadow-2xl animate-fadeIn">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600">
+                  <Wallet className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Registrar Movimiento Financiero Justificado
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Afecta el Estado de Ganancias y Pérdidas (P&L) con tasa BCV congelada
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsTxModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {formError && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-semibold">
+                {formError}
+              </div>
+            )}
+
+            <form onSubmit={handleTxSubmit} className="space-y-4 text-xs">
+              {/* Type Switch: EXPENSE vs INCOME */}
+              <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTxType('EXPENSE');
+                    setTxCategory('ALQUILER');
+                  }}
+                  className={`py-2 rounded-lg font-bold transition-all ${
+                    txType === 'EXPENSE'
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  - Gasto Operativo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTxType('INCOME');
+                    setTxCategory('OTROS_INGRESOS');
+                  }}
+                  className={`py-2 rounded-lg font-bold transition-all ${
+                    txType === 'INCOME'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  + Ingreso Extraordinario
+                </button>
+              </div>
+
+              {/* Categoría & Fecha */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold mb-1">Categoría Contable *</label>
+                  <select
+                    value={txCategory}
+                    onChange={(e) => setTxCategory(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2 font-bold"
+                  >
+                    {txType === 'EXPENSE'
+                      ? EXPENSE_CATEGORIES.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))
+                      : INCOME_CATEGORIES.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1">Fecha de la Operación</label>
+                  <input
+                    type="date"
+                    value={txDate}
+                    onChange={(e) => setTxDate(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2 font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Dual-Currency Amount Input */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">Moneda Base de Registro:</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setTxCurrencyOrigin('USD')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        txCurrencyOrigin === 'USD' ? 'bg-emerald-600 text-white' : 'text-slate-500'
+                      }`}
+                    >
+                      💵 Dólares ($)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTxCurrencyOrigin('VES')}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        txCurrencyOrigin === 'VES' ? 'bg-blue-600 text-white' : 'text-slate-500'
+                      }`}
+                    >
+                      🇻🇪 Bolívares (Bs)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-semibold mb-1">Monto en USD ($)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={txAmountUSD}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                        setTxAmountUSD(val);
+                        if (typeof val === 'number') {
+                          setTxAmountVES(parseFloat((val * txExchangeRate).toFixed(2)));
+                        }
+                      }}
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2 font-mono font-bold text-slate-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold mb-1">Monto en VES (Bs)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={txAmountVES}
+                      onChange={(e) => {
+                        const val = e.target.value === '' ? '' : parseFloat(e.target.value);
+                        setTxAmountVES(val);
+                        if (typeof val === 'number' && txExchangeRate > 0) {
+                          setTxAmountUSD(parseFloat((val / txExchangeRate).toFixed(2)));
+                        }
+                      }}
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2 font-mono font-bold text-blue-600"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                  <span>Tasa BCV Aplicada:</span>
+                  <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                    1 USD = {txExchangeRate.toFixed(4)} VES
+                  </span>
+                </div>
+              </div>
+
+              {/* Comprobante & Justificación */}
+              <div>
+                <label className="block font-semibold mb-1">N° de Factura / Recibo / Comprobante (Opcional)</label>
+                <input
+                  type="text"
+                  placeholder="FAC-9012 / REC-4412"
+                  value={txVoucherNumber}
+                  onChange={(e) => setTxVoucherNumber(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1">Justificación del Gasto / Ingreso *</label>
+                <textarea
+                  rows={2}
+                  required
+                  placeholder="Motivo detallado, proveedor del servicio, etc..."
+                  value={txJustification}
+                  onChange={(e) => setTxJustification(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2 text-xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsTxModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={createTxMutation.isPending}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all"
+                >
+                  {createTxMutation.isPending ? 'Guardando...' : 'Asentar en P&L'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 export default function ProfitAndLossPage() {
   return (
-    <RoleGuard allowedRoles={['STORE_ADMIN', 'SUPER_ADMIN']}>
-      <Suspense fallback={<div className="p-8 text-center text-xs text-slate-400">Cargando análisis P&L...</div>}>
+    <RoleGuard allowedRoles={['SUPER_ADMIN', 'STORE_ADMIN', 'SUPERVISOR']}>
+      <Suspense fallback={<div className="p-8 text-center text-xs text-slate-500">Cargando P&L...</div>}>
         <ProfitAndLossPageContent />
       </Suspense>
     </RoleGuard>
